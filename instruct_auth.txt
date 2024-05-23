@@ -1,0 +1,145 @@
+pipenv install python-jose[cryptography]
+pipenv install pydantic[email]
+pipenv install passlib
+pipenv install bcrypt
+
+2. В моделях додамо клас користувачів, додамо до нашого класу Contact що був поля:
+    created_at = Column(DateTime, default=func.now(), nullable=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
+    user_id: int | Column[int] = Column(Integer, ForeignKey("users.id"), nullable=True, default=1)
+    user = relationship("User", backref="contacts")
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: int | Column[int] = Column(Integer, primary_key=True)
+    username: str | Column[str] = Column(String(150), nullable=False)
+    email: str | Column[str] = Column(String(150), nullable=False, unique=True)
+    password: str | Column[str] = Column(String(255), nullable=False)
+    refresh_token: str | Column[str] | None = Column(String(255), nullable=True)
+    avatar: str | Column[str] | None = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+  
+  
+
+3. Виконаємо міграцію:
+alembic revision --autogenerate -m "add users"
+alembic upgrade head
+
+4. Створимо в routers auth.py
+5.  Створимо в repository users.py
+6.  Створимо папку а в ней services auth.py
+
+
+Access token використовується для доступу до захищених ресурсів, 
+оскільки він має обмежений термін життя та буде завершуватися.
+ Коли термін життя токена завершується, клієнт повинен запросити новий access token, 
+ використовуючи свій refresh token.
+
+
+
+Refresh token використовується для отримання нового access token без необхідності повторної аутентифікації.
+ Він має більший термін життя і повинен зберігатися в безпеці.
+
+
+7. Делаем user_schemas.py:
+ from typing import Optional
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+
+
+class UserSchema(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=8)
+
+
+class UserResponse(BaseModel):
+    id: int = 1
+    username: str
+    email: EmailStr
+    avatar: str
+    
+    
+    class Config:
+        from_attributes = True
+
+
+class TokenSchema(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+main.py:
+app.include_router(auth.router, prefix="/api")
+
+8. routes auth.py:
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Query, Security
+from fastapi.security import OAuth2PasswordRequestForm, HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.database.db import get_db
+from src.repository import users as repositories_users
+from src.user_schemas import UserSchema, TokenSchema, UserResponse
+from src.services.auth import auth_service
+
+router = APIRouter(prefix='/auth', tags=['auth'])
+get_refresh_token = HTTPBearer()
+
+
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup(body: UserSchema, db: AsyncSession = Depends(get_db)):
+    exist_user = await repositories_users.get_user_by_email(body.email, db)
+    if exist_user:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Account already exists")
+    body.password = auth_service.get_password_hash(body.password)
+    new_user = await repositories_users.create_user(body, db)
+    return new_user
+
+
+@router.post("/login",  response_model=TokenSchema)
+async def login(body: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    user = await repositories_users.get_user_by_email(body.username, db)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email")
+    if not auth_service.verify_password(body.password, user.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+    # Generate JWT
+    access_token = await auth_service.create_access_token(data={"sub": user.email})
+    refresh_token = await auth_service.create_refresh_token(data={"sub": user.email})
+    await repositories_users.update_token(user, refresh_token, db)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@router.get('/refresh_token',  response_model=TokenSchema)
+async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(get_refresh_token),
+                        db: AsyncSession = Depends(get_db)):
+    token = credentials.credentials
+    email = await auth_service.decode_refresh_token(token)
+    user = await repositories_users.get_user_by_email(email, db)
+    if user.refresh_token != token:
+        await repositories_users.update_token(user, None, db)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    access_token = await auth_service.create_access_token(data={"sub": email})
+    refresh_token = await auth_service.create_refresh_token(data={"sub": email})
+    await repositories_users.update_token(user, refresh_token, db)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+
+9. Идем в routers contacts и в функции добавляем рядок 
+     current_user: User = Depends(auth_service.get_current_user)
+
+
+10. В каждой функции добавляем current_user
+
+11ю В repository contacts.py теперь тоже добавляем user:User и изменим функции с учетом нового параметра
+
+12. В schemas.py добавим:
+user: UserResponse
+

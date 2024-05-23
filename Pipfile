@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = "*"
+alembic = "*"
+sqlalchemy = "*"
+asyncpg = "*"
+uvicorn = "*"
+faker = "*"
+python-jose = {extras = ["cryptography"], version = "*"}
+pydantic = {extras = ["email"], version = "*"}
+passlib = "*"
+libgravatar = "*"
+bcrypt = "*"
+fastapi-mail = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
